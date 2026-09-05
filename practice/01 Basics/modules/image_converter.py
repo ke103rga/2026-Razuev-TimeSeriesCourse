@@ -3,7 +3,8 @@ import pandas as pd
 import math
 import cv2
 import imutils
-from google.colab.patches import cv2_imshow
+import matplotlib.pyplot as plt
+# from google.colab.patches import cv2_imshow
 
 
 class Image2TimeSeries:
@@ -15,26 +16,37 @@ class Image2TimeSeries:
     angle_step: angle step for finding the contour points
     """
     
-    def __init__(self, angle_step: int = 10) -> None:
-        self.angle_step: int = angle_step
+    def __init__(self, image, angle_step: int = 10, visualize=True) -> None:
+        self.image = image
+        self.angle_step = angle_step
+        self.is_visualize = visualize
+
+    
+    def cv2_imshow(self, image):
+        """Отображает изображение с помощью matplotlib"""
+        # Конвертируем BGR в RGB (cv2 загружает в BGR)
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        plt.figure(figsize=(8, 6))
+        plt.imshow(image_rgb)
+        plt.axis('off')
+        plt.show()
 
 
-    def _img_preprocess(self, img: np.ndarray) -> np.ndarray:
-        """
-        Preprocess the raw image: convert to grayscale, inverse, blur slightly, and threshold it
+    def _img_preprocess(self, image: np.ndarray) -> np.ndarray:
+        # Предобработка изображения
         
-        Parameters
-        ----------
-        img: raw image
+        # 1. Преобразование в оттенки серого
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        Returns
-        -------
-        prep_img: image after preprocessing
-        """
-
-        # INSERT YOUR CODE
-
-        return prep_img
+        # 2. Бинаризация (пороговая обработка)
+        _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+        
+        # 3. Удаление шума (морфологическая операция)
+        kernel = np.ones((3, 3), np.uint8)
+        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
+        
+        return cleaned
 
 
     def _get_contour(self, img: np.ndarray) -> np.ndarray:
@@ -164,10 +176,10 @@ class Image2TimeSeries:
         for i in range(len(edge_coordinates)):
             cv2.drawContours(img, np.array([[center, edge_coordinates[i]]]), -1, (255, 0, 255), 4)
 
-        cv2_imshow(imutils.resize(img, width=200))
+        self.cv2_imshow(imutils.resize(img, width=200))
 
 
-    def convert(self, img: np.ndarray, is_visualize: bool = False) -> np.ndarray:
+    def convert(self, img: np.ndarray, is_visualize: bool = None) -> np.ndarray:
         """
         Convert image to time series by angle-based method
 
@@ -182,6 +194,8 @@ class Image2TimeSeries:
         """
 
         ts = []
+        if is_visualize is None:
+            is_visualize = self.is_visualize
 
         prep_img = self._img_preprocess(img)
         contour = self._get_contour(prep_img)

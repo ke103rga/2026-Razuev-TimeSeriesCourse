@@ -29,7 +29,7 @@ class TimeSeriesKNN:
             self.metric_params.update(metric_params)
 
 
-    def fit(self, X_train: np.ndarray, Y_train: np.ndarray) -> Self:
+    def fit(self, X_train: np.ndarray, Y_train: np.ndarray) -> "TimeSeriesKNN":
         """
         Fit the model using X_train as training data and Y_train as labels
 
@@ -48,7 +48,6 @@ class TimeSeriesKNN:
 
         return self
 
-
     def _distance(self, x_train: np.ndarray, x_test: np.ndarray) -> float:
         """
         Compute distance between the train and test samples
@@ -66,6 +65,15 @@ class TimeSeriesKNN:
         dist = 0
 
         # INSERT YOUR CODE
+        if self.metric == 'euclidean':
+            if self.metric_params.get('normalize', False):
+                dist = norm_ED_distance(x_train, x_test)
+            else:
+                dist = ED_distance(x_train, x_test)
+        elif self.metric == 'dtw':
+            dist = DTW_distance(x_train, x_test)
+        else:
+            raise ValueError(f"Unsupported metric: {self.metric}")
 
         return dist
 
@@ -86,6 +94,15 @@ class TimeSeriesKNN:
         neighbors = []
 
         # INSERT YOUR CODE
+        # Вычисляем расстояния до всех обучающих образцов
+        distances = []
+        for i, x_train in enumerate(self.X_train):
+            dist = self._distance(x_train, x_test)
+            distances.append((dist, self.Y_train[i]))
+        
+        # Сортируем по расстоянию и берем k ближайших
+        distances.sort(key=lambda x: x[0])
+        neighbors = distances[:self.n_neighbors]
 
         return neighbors
 
@@ -106,6 +123,18 @@ class TimeSeriesKNN:
         y_pred = []
 
         # INSERT YOUR CODE
+        for x_test in X_test:
+            # Находим k ближайших соседей
+            neighbors = self._find_neighbors(x_test)
+            
+            # Собираем метки соседей
+            neighbor_labels = [label for _, label in neighbors]
+            
+            # Находим наиболее частый класс
+            from collections import Counter
+            counter = Counter(neighbor_labels)
+            most_common_label = counter.most_common(1)[0][0]
+            y_pred.append(most_common_label)
 
         return np.array(y_pred)
 

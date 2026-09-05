@@ -49,7 +49,17 @@ class PairwiseDistance:
 
         dist_func = None
 
-        # INSERT YOUR CODE
+         # Выбираем функцию расстояния в зависимости от метрики и необходимости нормализации
+        if self.metric == 'euclidean':
+            if self.is_normalize:
+                dist_func = norm_ED_distance
+            else:
+                dist_func = ED_distance
+        elif self.metric == 'dtw':
+            # Для DTW нормализация выполняется отдельно через z_normalize
+            dist_func = DTW_distance
+        else:
+            raise ValueError(f"Unsupported metric: {self.metric}")
 
         return dist_func
 
@@ -69,6 +79,30 @@ class PairwiseDistance:
         matrix_shape = (input_data.shape[0], input_data.shape[0])
         matrix_values = np.zeros(shape=matrix_shape)
         
-        # INSERT YOUR CODE
+        # Получаем функцию расстояния
+        dist_func = self._choose_distance()
+        
+        # Нормализуем данные, если необходимо (для DTW)
+        if self.metric == 'dtw' and self.is_normalize:
+            normalized_data = np.array([z_normalize(ts) for ts in input_data])
+        else:
+            normalized_data = input_data
+        
+        # Вычисляем матрицу расстояний
+        n_series = input_data.shape[0]
+        
+        for i in range(n_series):
+            for j in range(i + 1, n_series):
+                # Вычисляем расстояние между рядами i и j
+                if self.metric == 'dtw' and self.is_normalize:
+                    # Для DTW с нормализацией используем нормализованные данные
+                    distance = dist_func(normalized_data[i], normalized_data[j])
+                else:
+                    # Для остальных случаев используем исходные или уже нормализованные данные
+                    distance = dist_func(normalized_data[i], normalized_data[j])
+                
+                # Заполняем симметричную матрицу
+                matrix_values[i, j] = distance
+                matrix_values[j, i] = distance
 
         return matrix_values
