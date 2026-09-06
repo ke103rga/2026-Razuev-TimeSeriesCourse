@@ -154,9 +154,42 @@ class NaiveBestMatchFinder(BestMatchFinder):
             'distance' : []
         }
         
-        # INSERT YOUR CODE
+        # Нормализуем запрос, если требуется
+        if self.is_normalize:
+            query_norm = z_normalize(query)
+        else:
+            query_norm = query
+        
+        # Вычисляем DTW расстояние для каждой подпоследовательности
+        for i in range(N):
+            # Извлекаем подпоследовательность
+            subsequence = ts_data[i]
+            
+            # Нормализуем подпоследовательность, если требуется
+            if self.is_normalize:
+                subsequence_norm = z_normalize(subsequence)
+            else:
+                subsequence_norm = subsequence
+            
+            # Вычисляем DTW расстояние с ограничением
+            # self.r - вещественное число (радиус)
+            dist = DTW_distance(query_norm, subsequence_norm, self.r)
+            
+            # Сохраняем расстояние в профиль
+            dist_profile[i] = dist
+            
+            # Обновляем best-so-far
+            if dist < bsf:
+                bsf = dist
+        
+        # Находим topK похожих подпоследовательностей
+        topK_results = topK_match(dist_profile, excl_zone, self.topK)
+        
+        bestmatch['index'] = topK_results['indices']
+        bestmatch['distance'] = topK_results['distances']
 
         return bestmatch
+
 
 
 class UCR_DTW(BestMatchFinder):
@@ -196,11 +229,10 @@ class UCR_DTW(BestMatchFinder):
         -------
         lb_Kim: LB_Kim lower bound
         """
-
-        lb_Kim = 0
         
-        # INSERT YOUR CODE
-
+        # LB_KimFL: сумма квадратов разностей первых и последних точек
+        lb_Kim = (subs1[0] - subs2[0]) ** 2 + (subs1[-1] - subs2[-1]) ** 2
+        
         return lb_Kim
 
 
@@ -210,19 +242,40 @@ class UCR_DTW(BestMatchFinder):
         
         Parameters
         ----------
-        subs1: the first subsequence
-        subs2: the second subsequence
+        subs1: the first subsequence (query)
+        subs2: the second subsequence (candidate)
         r: warping window size
         
         Returns
         -------
         lb_Keogh: LB_Keogh lower bound
         """
-
+        
+        n = len(subs1)
+        
+        # Строим верхнюю и нижнюю оболочки для subs1 (запроса)
+        U = np.zeros(n)
+        L = np.zeros(n)
+        
+        # Вычисляем оболочки с учетом радиуса r
+        for i in range(n):
+            # Определяем границы окна
+            start = max(0, i - int(np.ceil(r)))
+            end = min(n, i + int(np.ceil(r)) + 1)
+            
+            # Верхняя оболочка - максимум в окне
+            U[i] = np.max(subs1[start:end])
+            # Нижняя оболочка - минимум в окне
+            L[i] = np.min(subs1[start:end])
+        
+        # Вычисляем LB_Keogh
         lb_Keogh = 0
-
-        # INSERT YOUR CODE
-
+        for i in range(n):
+            if subs2[i] > U[i]:
+                lb_Keogh += (subs2[i] - U[i]) ** 2
+            elif subs2[i] < L[i]:
+                lb_Keogh += (subs2[i] - L[i]) ** 2
+        
         return lb_Keogh
 
 
@@ -260,21 +313,99 @@ class UCR_DTW(BestMatchFinder):
         """
 
         query = copy.deepcopy(query)
-        if (len(ts_data.shape) != 2): # time series set
+        if (len(ts_data.shape) != 2):  # time series set
             ts_data = sliding_window(ts_data, len(query))
 
         N, m = ts_data.shape
 
         excl_zone = self._calculate_excl_zone(m)
 
-        dist_profile = np.ones((N,))*np.inf
+        dist_profile = np.ones((N,)) * np.inf
         bsf = np.inf
         
         bestmatch = {
-            'index' : [],
-            'distance' : []
+            'index': [],
+            'distance': []
         }
 
-        # INSERT YOUR CODE
+        # Нормализуем запрос
+        if self.is_normalize:
+            query_norm = z_normalize(query)
+        else:
+            query_norm = query
+
+        # Предварительное вычисление оболочек для запроса (используется в LB_KeoghEC)
+        # Для LB_KeoghEQ оболочки строятся вокруг запроса
+        U_query = np.zeros(m)
+        L_query = np.zeros(m)
+        
+        for i in range(m):
+            start = max(0, i - int(np.ceil(self.r)))
+            end = min(m, i + int(np.ceil(self.r)) + 1)
+            U_query[i] = np.max(query_norm[start:end])
+            L_query[i] = np.min(query_norm[start:end])
+
+        # Проходим по всем подпоследовательностям
+        for i in range(N):
+            # Извлекаем подпоследовательность
+            subsequence = ts_data[i]
+            
+            # Нормализуем, если требуется
+            if self.is_normalize:
+                subsequence_norm = z_normalize(subsequence)
+            else:
+                subsequence_norm = subsequence
+            
+            # 1. LB_Kim
+            lb_kim = self._LB_Kim(query_norm, subsequence_norm)
+            if lb_kim > bsf:
+                self.lb_Kim_num += 1
+                continue
+            
+            # 2. LB_KeoghEQ (оболочка вокруг запроса)
+            lb_keogh_eq = self._LB_Keogh(query_norm, subsequence_norm, self.r)
+            if lb_keogh_eq > bsf:
+                self.lb_KeoghQC_num += 1
+                continue
+            
+            # 3. LB_KeoghEC (оболочка вокруг кандидата)
+            # Строим оболочку для кандидата
+            U_candidate = np.zeros(m)
+            L_candidate = np.zeros(m)
+            
+            for j in range(m):
+                start = max(0, j - int(np.ceil(self.r)))
+                end = min(m, j + int(np.ceil(self.r)) + 1)
+                U_candidate[j] = np.max(subsequence_norm[start:end])
+                L_candidate[j] = np.min(subsequence_norm[start:end])
+            
+            # Вычисляем LB_KeoghEC (оболочка вокруг кандидата, сравниваем с запросом)
+            lb_keogh_ec = 0
+            for j in range(m):
+                if query_norm[j] > U_candidate[j]:
+                    lb_keogh_ec += (query_norm[j] - U_candidate[j]) ** 2
+                elif query_norm[j] < L_candidate[j]:
+                    lb_keogh_ec += (query_norm[j] - L_candidate[j]) ** 2
+            
+            if lb_keogh_ec > bsf:
+                self.lb_KeoghCQ_num += 1
+                continue
+            
+            # 4. Если все нижние границы пройдены, вычисляем DTW
+            self.not_pruned_num += 1
+            dist = DTW_distance(query_norm, subsequence_norm, self.r)
+            
+            # Сохраняем расстояние в профиль
+            dist_profile[i] = dist
+            
+            # Обновляем best-so-far
+            if dist < bsf:
+                bsf = dist
+
+        # Находим topK похожих подпоследовательностей
+        topK_results = topK_match(dist_profile, excl_zone, self.topK)
+        
+        bestmatch['index'] = topK_results['indices']
+        bestmatch['distance'] = topK_results['distances']
 
         return bestmatch
